@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+notebooks/
+.env
+*.py[cod]
+data/
+\obsidian
