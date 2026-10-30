@@ -2,6 +2,12 @@ import streamlit as st
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
+import requests
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 
 @st.cache_data
 def load_data():
@@ -9,12 +15,14 @@ def load_data():
     movies = pd.read_csv("data/movies.csv")
     gscores = pd.read_csv("data/genome-scores.csv")
     gtags = pd.read_csv("data/genome-tags.csv")
-    return ratings, movies, gscores, gtags
+    links = pd.read_csv("data/links.csv")
+    return ratings, movies, gscores, gtags, links
 
-ratings, movies, gscores, gtags = load_data()
+ratings, movies, gscores, gtags, links = load_data()
 
 @st.cache_data
-def prep_data(ratings, movies, gscores):
+def prep_data(ratings, movies, gscores, links):
+    movies = pd.merge(movies, links, on = "movieId")
     movie_stats = ratings.groupby("movieId")["rating"].agg(["mean", "count"])
     genre_dummies = movies["genres"].str.get_dummies(sep="|")
     genome_scores = gscores.pivot(
@@ -24,9 +32,28 @@ def prep_data(ratings, movies, gscores):
         )
     genome_scores_matrix = genome_scores.loc[genome_scores.index.isin(movies["movieId"])]
     C = ratings["rating"].mean()
-    return movie_stats, genre_dummies, genome_scores, genome_scores_matrix, C
+    return movie_stats, genre_dummies, genome_scores, genome_scores_matrix, C, movies
 
-movie_stats, genre_dummies, genome_scores, genome_scores_matrix, C = prep_data(ratings, movies, gscores)
+movie_stats, genre_dummies, genome_scores, genome_scores_matrix, C, movies = prep_data(ratings, movies, gscores, links)
+
+@st.cache_data
+def get_poster(movieId):
+    movie = movies.loc[movies["movieId"] == movieId]
+    curr_id = movie["tmdbId"].iloc[0]
+    if pd.notna(curr_id):
+        curr_id = int(movie["tmdbId"].iloc[0])
+        curr_url = f"https://api.themoviedb.org/3/movie/{curr_id}"
+        curr_response = requests.get(curr_url, params = {"api_key": TMDB_API_KEY}, timeout = 10)
+        curr_response.raise_for_status()
+        curr_data = curr_response.json()
+        if pd.isna(curr_data["poster_path"]):
+            return None
+        else:
+            curr_path = curr_data["poster_path"]
+        poster_url = f"https://image.tmdb.org/t/p/w500{curr_path}"
+        return poster_url
+    else:
+        return None
 
 movies["title"] = movies["title"].str.replace(
     r"^(.*), The (\(\d{4}\))$",
@@ -34,10 +61,8 @@ movies["title"] = movies["title"].str.replace(
     regex=True
 )
 
-st.title("Reelchemy")
-
-movie_title = st.text_input("Search for a movie")
-st.write("You searched for:", movie_title)
+if "selected_movie_id" not in st.session_state:
+    st.session_state.selected_movie_id = None
 
 @st.cache_data
 def recommend(movieId):
@@ -114,17 +139,59 @@ def recommend(movieId):
         titled_hybrid_scores = pd.merge(hybrid_scores, movies[["movieId", "title"]], on = "movieId", how = "left")
         return titled_hybrid_scores
 
-if movie_title:
-    results = movies[movies["title"].str.contains(movie_title, case=False, na=False)][["title", "genres"]]
+
+#--------------------------------------STREAMLIT-------------------------------------------------------#
+st.title("Reelchemy")
+
+def reset_selection():
+    st.session_state.selected_movie_id = None
+movie_title = st.text_input("Search for a movie", on_change=reset_selection)
+
+st.write("You searched for:", movie_title)
+
+if movie_title and st.session_state.selected_movie_id is None:
+    results = movies[movies["title"].str.contains(movie_title, case=False, na=False)][["movieId","title", "genres","tmdbId"]]
 
     if not results.empty:
-        selection = st.selectbox("Select a Movie", results["title"].tolist())
-
-        selected_movie_id = movies.loc[
-            movies["title"] == selection, "movieId"
-        ].iloc[0]
-
-        recommendations = recommend(selected_movie_id)
-        st.dataframe(recommendations)
+        cols = st.columns(3)
+        
+        for i, (_, row) in enumerate(results.iterrows()):
+            with cols[i % 3]:
+                movie_id = row["movieId"]
+                poster = get_poster(movie_id)
+                if poster:
+                    st.image(poster, width=150)
+                else:
+                    st.write("Poster unavailable")
+                st.write(row["title"])
+                if st.button("Select", key=f"select_{movie_id}"):
+                    st.session_state.selected_movie_id = movie_id
+                    st.rerun()
     else:
         st.write("no movies found")
+
+if st.session_state.selected_movie_id is not None:
+    selected_movie = movies[movies["movieId"] == st.session_state.selected_movie_id].iloc[0]
+    selected_poster = get_poster(st.session_state.selected_movie_id)
+    st.subheader("Your Selected Movie")
+
+    if selected_poster:
+        st.image(selected_poster, width=200)
+    else:
+        st.write("Poster unavailable")
+    st.write(selected_movie["title"])
+
+    recommendations = recommend(st.session_state.selected_movie_id).head(21)
+    st.subheader("Recommended Movies")
+    rec_cols = st.columns(3)
+
+    for i, (_,row) in enumerate(recommendations.iterrows()):
+        with rec_cols[i % 3]:
+            movie_id = row["movieId"]
+            poster = get_poster(movie_id)
+            if poster:
+                st.image(poster, width=150)
+            else:
+                st.write("Poster unavailable")
+            st.write(row["title"]) 
+    

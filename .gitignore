@@ -5,3 +5,4 @@ notebooks/
 *.py[cod]
 data/
 \obsidian
+/notes
