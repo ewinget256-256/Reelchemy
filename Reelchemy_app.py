@@ -44,12 +44,20 @@ def get_poster(movieId):
         curr_id = int(movie["tmdbId"].iloc[0])
         curr_url = f"https://api.themoviedb.org/3/movie/{curr_id}"
         curr_response = requests.get(curr_url, params = {"api_key": TMDB_API_KEY}, timeout = 10)
-        curr_response.raise_for_status()
+
+        try:
+            curr_response.raise_for_status()
+        except requests.exceptions.HTTPError:
+            return None
+
         curr_data = curr_response.json()
         if pd.isna(curr_data["poster_path"]):
             return None
         else:
             curr_path = curr_data["poster_path"]
+
+            if not curr_path:
+                return None
         poster_url = f"https://image.tmdb.org/t/p/w500{curr_path}"
         return poster_url
     else:
@@ -136,7 +144,19 @@ def recommend(movieId):
         hybrid_scores["combined_similarity"] = np.where(hybrid_scores["genome_similarity"].isna(), hybrid_scores["genre_similarity"], hybrid_scores["combined_similarity"])
         hybrid_scores = hybrid_scores.sort_values("combined_similarity", ascending=False)
 
-        titled_hybrid_scores = pd.merge(hybrid_scores, movies[["movieId", "title"]], on = "movieId", how = "left")
+        titled_hybrid_scores = pd.merge(
+            hybrid_scores,
+            movies[["movieId", "title"]],
+            on="movieId",
+            how="left"
+        )
+
+        titled_hybrid_scores = pd.merge(
+            titled_hybrid_scores,
+            movie_stats,
+            on="movieId",
+            how="left"
+        )
         return titled_hybrid_scores
 
 
@@ -172,6 +192,7 @@ if movie_title and st.session_state.selected_movie_id is None:
 
 if st.session_state.selected_movie_id is not None:
     selected_movie = movies[movies["movieId"] == st.session_state.selected_movie_id].iloc[0]
+    release_year = selected_movie["title"][-5:-1]
     selected_poster = get_poster(st.session_state.selected_movie_id)
     st.subheader("Your Selected Movie")
 
@@ -192,6 +213,10 @@ if st.session_state.selected_movie_id is not None:
             if poster:
                 st.image(poster, width=150)
             else:
-                st.write("Poster unavailable")
+                st.image("Assets/poster_not_found_image.png", width=150)
             st.write(row["title"]) 
+            release_year = row["title"][-5:-1]
+            st.write(f"Released: {release_year}")
+            st.write(f"Average Rating: {row['mean']:.1f}/5")
+            st.write(f"Number of Ratings: {int(row['count']):,}")
     
