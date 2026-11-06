@@ -7,3 +7,5 @@ data/
 \obsidian
 /notes
 /Assets
+.streamlit/
+/.streamlit/

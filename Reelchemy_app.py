@@ -1,3 +1,4 @@
+#--------------------------------IMPORTS-------------------------------------------------------#
 import streamlit as st
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
@@ -5,20 +6,24 @@ import numpy as np
 import requests
 import os
 from dotenv import load_dotenv
+import re
 
 load_dotenv()
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
+
+#--------------------------------------DATA LOADING-------------------------------------------------------#
 
 @st.cache_data
 def load_data():
     ratings = pd.read_csv("data/ratings.csv")
     movies = pd.read_csv("data/movies.csv")
     gscores = pd.read_csv("data/genome-scores.csv")
-    gtags = pd.read_csv("data/genome-tags.csv")
     links = pd.read_csv("data/links.csv")
-    return ratings, movies, gscores, gtags, links
+    return ratings, movies, gscores, links
 
-ratings, movies, gscores, gtags, links = load_data()
+ratings, movies, gscores, links = load_data()
+
+#--------------------------------------DATA PREPARATION-------------------------------------------------------#
 
 @st.cache_data
 def prep_data(ratings, movies, gscores, links):
@@ -36,33 +41,6 @@ def prep_data(ratings, movies, gscores, links):
 
 movie_stats, genre_dummies, genome_scores, genome_scores_matrix, C, movies = prep_data(ratings, movies, gscores, links)
 
-@st.cache_data
-def get_poster(movieId):
-    movie = movies.loc[movies["movieId"] == movieId]
-    curr_id = movie["tmdbId"].iloc[0]
-    if pd.notna(curr_id):
-        curr_id = int(movie["tmdbId"].iloc[0])
-        curr_url = f"https://api.themoviedb.org/3/movie/{curr_id}"
-        curr_response = requests.get(curr_url, params = {"api_key": TMDB_API_KEY}, timeout = 10)
-
-        try:
-            curr_response.raise_for_status()
-        except requests.exceptions.HTTPError:
-            return None
-
-        curr_data = curr_response.json()
-        if pd.isna(curr_data["poster_path"]):
-            return None
-        else:
-            curr_path = curr_data["poster_path"]
-
-            if not curr_path:
-                return None
-        poster_url = f"https://image.tmdb.org/t/p/w500{curr_path}"
-        return poster_url
-    else:
-        return None
-
 movies["title"] = movies["title"].str.replace(
     r"^(.*), The (\(\d{4}\))$",
     r"The \1 \2",
@@ -72,6 +50,43 @@ movies["title"] = movies["title"].str.replace(
 if "selected_movie_id" not in st.session_state:
     st.session_state.selected_movie_id = None
 
+#--------------------------------------POSTER FUNCTIONS-------------------------------------------------------#
+
+@st.cache_data
+def get_poster(movieId):
+    movie = movies.loc[movies["movieId"] == movieId]
+    curr_id = movie["tmdbId"].iloc[0]
+    if pd.notna(curr_id):
+        curr_id = int(curr_id)
+        curr_url = f"https://api.themoviedb.org/3/movie/{curr_id}"
+        
+
+        try:
+            curr_response = requests.get(curr_url, params = {"api_key": TMDB_API_KEY}, timeout = 10)
+            curr_response.raise_for_status()
+            curr_data = curr_response.json()
+            curr_path = curr_data.get("poster_path")
+        except requests.exceptions.RequestException:
+            return None
+        except requests.exceptions.JSONDecodeError:
+            return None
+        
+        if not curr_path:
+            return None
+
+        poster_url = f"https://image.tmdb.org/t/p/w500{curr_path}"
+        return poster_url
+    else:
+        return None
+
+def display_poster(poster_url, width):
+    if poster_url:
+        st.image(poster_url, width=width)
+    else:
+         st.image("Assets/poster_not_found_image.png", width=width)
+    
+
+#--------------------------------------Recommendation System-------------------------------------------------------#
 @st.cache_data
 def recommend(movieId):
 
@@ -126,7 +141,6 @@ def recommend(movieId):
 
         movie_sim_df = movie_sim_df[movie_sim_df["movieId"] != movieId]
         movie_sim_df = movie_sim_df.sort_values(by="similarity", ascending=False)
-        movie_df = pd.merge(movie_sim_df, movies[["movieId", "title", "genres"]], on="movieId")
     
         hybrid_scores = pd.merge(
             given_recs_with_ratings[["movieId", "similarity"]].rename(columns={"similarity": "genre_similarity"}),
@@ -146,7 +160,7 @@ def recommend(movieId):
 
         titled_hybrid_scores = pd.merge(
             hybrid_scores,
-            movies[["movieId", "title"]],
+            movies[["movieId", "title", "genres"]],
             on="movieId",
             how="left"
         )
@@ -162,12 +176,12 @@ def recommend(movieId):
 
 #--------------------------------------STREAMLIT-------------------------------------------------------#
 st.title("Reelchemy")
+st.caption("Discover movies you'll love based on movies you already like!")
 
 def reset_selection():
     st.session_state.selected_movie_id = None
-movie_title = st.text_input("Search for a movie", on_change=reset_selection)
 
-st.write("You searched for:", movie_title)
+movie_title = st.text_input("Search for a movie", on_change=reset_selection)
 
 if movie_title and st.session_state.selected_movie_id is None:
     results = movies[movies["title"].str.contains(movie_title, case=False, na=False)][["movieId","title", "genres","tmdbId"]]
@@ -177,46 +191,48 @@ if movie_title and st.session_state.selected_movie_id is None:
         
         for i, (_, row) in enumerate(results.iterrows()):
             with cols[i % 3]:
-                movie_id = row["movieId"]
-                poster = get_poster(movie_id)
-                if poster:
-                    st.image(poster, width=150)
-                else:
-                    st.write("Poster unavailable")
-                st.write(row["title"])
-                if st.button("Select", key=f"select_{movie_id}"):
-                    st.session_state.selected_movie_id = movie_id
-                    st.rerun()
+                with st.container(border=True):
+                    movie_id = row["movieId"]
+                    poster = get_poster(movie_id)
+                    display_poster(poster, width=150)
+                    st.markdown(f"**{row['title']}**")
+                    st.caption(f"Genres: {row['genres']}")
+                    if st.button("Select", key=f"select_{movie_id}"):
+                        st.session_state.selected_movie_id = movie_id
+                        st.rerun()
     else:
         st.write("no movies found")
 
 if st.session_state.selected_movie_id is not None:
+    st.button("Reset Selection", on_click=reset_selection)
+
     selected_movie = movies[movies["movieId"] == st.session_state.selected_movie_id].iloc[0]
-    release_year = selected_movie["title"][-5:-1]
     selected_poster = get_poster(st.session_state.selected_movie_id)
     st.subheader("Your Selected Movie")
 
-    if selected_poster:
-        st.image(selected_poster, width=200)
-    else:
-        st.write("Poster unavailable")
+    display_poster(selected_poster, width=200)
     st.write(selected_movie["title"])
 
     recommendations = recommend(st.session_state.selected_movie_id).head(21)
     st.subheader("Recommended Movies")
-    rec_cols = st.columns(3)
+    rec_cols = st.columns(3)    
 
     for i, (_,row) in enumerate(recommendations.iterrows()):
         with rec_cols[i % 3]:
-            movie_id = row["movieId"]
-            poster = get_poster(movie_id)
-            if poster:
-                st.image(poster, width=150)
-            else:
-                st.image("Assets/poster_not_found_image.png", width=150)
-            st.write(row["title"]) 
-            release_year = row["title"][-5:-1]
-            st.write(f"Released: {release_year}")
-            st.write(f"Average Rating: {row['mean']:.1f}/5")
-            st.write(f"Number of Ratings: {int(row['count']):,}")
+            with st.container(border=True):
+                movie_id = row["movieId"]
+                poster = get_poster(movie_id)
+                display_poster(poster, width=150)
+                st.markdown(f"**{row['title']}**")
+                st.caption(f"Genres: {row['genres']}") 
+                release_year = re.search(r"\((\d{4})\)$", row["title"])
+
+                if release_year:
+                    release_year = release_year.group(1)
+                    st.caption(f"Released: {release_year}")
+                st.caption(f"Average Rating: {row['mean']:.1f}/5")
+                st.caption(f"Number of Ratings: {int(row['count']):,}")
     
+st.divider()
+st.caption("This app was created by Eric Winget using Streamlit and the MovieLens dataset. The movie posters are fetched from The Movie Database (TMDb) API.")
+st.caption("This product uses the TMDB API but is not endorsed or certified by TMDB.")
