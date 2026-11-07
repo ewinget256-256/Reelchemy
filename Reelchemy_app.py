@@ -7,6 +7,8 @@ import requests
 import os
 from dotenv import load_dotenv
 import re
+import zipfile
+import io
 
 load_dotenv()
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
@@ -15,12 +17,29 @@ TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 
 @st.cache_data
 def load_data():
+    os.makedirs("data", exist_ok=True)
+
+    if not os.path.exists("data/ratings.csv"):
+        url = "https://files.grouplens.org/datasets/movielens/ml-latest.zip"
+        response = requests.get(url)
+        response.raise_for_status()
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
+            for filename in ["ratings.csv", "movies.csv", "genome-scores.csv", "links.csv"]:
+                zip_file.extract(f"ml-latest/{filename}", "data")
+
+        for filename in ["ratings.csv", "movies.csv", "genome-scores.csv", "links.csv"]:
+            os.replace(f"data/ml-latest/{filename}", f"data/{filename}")
+
+        os.rmdir("data/ml-latest")
+
     ratings = pd.read_csv("data/ratings.csv")
     movies = pd.read_csv("data/movies.csv")
     gscores = pd.read_csv("data/genome-scores.csv")
     links = pd.read_csv("data/links.csv")
-    return ratings, movies, gscores, links
 
+    return ratings, movies, gscores, links
+    
 ratings, movies, gscores, links = load_data()
 
 #--------------------------------------DATA PREPARATION-------------------------------------------------------#
