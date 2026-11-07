@@ -11,7 +11,11 @@ import zipfile
 import io
 
 load_dotenv()
-TMDB_API_KEY = os.getenv("TMDB_API_KEY")
+
+try:
+    TMDB_API_KEY = st.secrets["TMDB_API_KEY"]
+except (KeyError, FileNotFoundError):
+    TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 
 #--------------------------------------DATA LOADING-------------------------------------------------------#
 
@@ -39,7 +43,7 @@ def load_data():
     links = pd.read_csv("data/links.csv")
 
     return ratings, movies, gscores, links
-    
+
 ratings, movies, gscores, links = load_data()
 
 #--------------------------------------DATA PREPARATION-------------------------------------------------------#
