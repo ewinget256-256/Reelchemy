@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 import re
 import zipfile
 import io
+import shutil
+
 
 load_dotenv()
 
@@ -23,23 +25,39 @@ except (KeyError, FileNotFoundError):
 def load_data():
     os.makedirs("data", exist_ok=True)
 
-    if not os.path.exists("data/ratings.csv"):
+    filenames = ["ratings.csv", "movies.csv", "genome-scores.csv", "links.csv"]
+
+    if not all(os.path.exists(f"data/{f}") for f in filenames):
         url = "https://files.grouplens.org/datasets/movielens/ml-latest.zip"
-        response = requests.get(url)
-        response.raise_for_status()
 
-        with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
-            for filename in ["ratings.csv", "movies.csv", "genome-scores.csv", "links.csv"]:
-                zip_file.extract(f"ml-latest/{filename}", "data")
+        zip_path = "data/ml-latest.zip"
+        temp_path = "data/ml-latest.zip.part"
 
-        for filename in ["ratings.csv", "movies.csv", "genome-scores.csv", "links.csv"]:
-            os.replace(f"data/ml-latest/{filename}", f"data/{filename}")
+        try:
+            with requests.get(url, stream=True, timeout=(30, 600)) as response:
+                response.raise_for_status()
 
-        os.rmdir("data/ml-latest")
+                with open(temp_path, "wb") as file:
+                    for chunk in response.iter_content(chunk_size=8 * 1024 * 1024):
+                        if chunk:
+                            file.write(chunk)
 
-    ratings = pd.read_csv("data/ratings.csv")
+            os.replace(temp_path, zip_path)
+
+            with zipfile.ZipFile(zip_path, "r") as zip_file:
+                for filename in filenames:
+                    with zip_file.open(f"ml-latest/{filename}") as source:
+                        with open(f"data/{filename}", "wb") as destination:
+                            shutil.copyfileobj(source, destination)
+
+        finally:
+            for path in [temp_path, zip_path]:
+                if os.path.exists(path):
+                    os.remove(path)
+
+    ratings = pd.read_csv("data/ratings.csv",usecols=["movieId", "rating"],dtype={"movieId": "int32", "rating": "float32"})
     movies = pd.read_csv("data/movies.csv")
-    gscores = pd.read_csv("data/genome-scores.csv")
+    gscores = pd.read_csv("data/genome-scores.csv",dtype={"movieId": "int32", "tagId": "int16", "relevance": "float32"})
     links = pd.read_csv("data/links.csv")
 
     return ratings, movies, gscores, links
