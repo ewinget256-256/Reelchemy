@@ -7,9 +7,6 @@ import requests
 import os
 from dotenv import load_dotenv
 import re
-import zipfile
-import io
-import shutil
 
 
 load_dotenv()
@@ -21,46 +18,27 @@ except (KeyError, FileNotFoundError):
 
 #--------------------------------------DATA LOADING-------------------------------------------------------#
 
-@st.cache_data
+@st.cache_resource
 def load_data():
-    os.makedirs("data", exist_ok=True)
 
-    filenames = ["ratings.csv", "movies.csv", "genome-scores.csv", "links.csv"]
+    ratings = pd.read_parquet(
+        "data/parquet/ratings.parquet"
+    )
 
-    if not all(os.path.exists(f"data/{f}") for f in filenames):
-        url = "https://files.grouplens.org/datasets/movielens/ml-latest.zip"
+    movies = pd.read_parquet(
+        "data/parquet/movies.parquet"
+    )
 
-        zip_path = "data/ml-latest.zip"
-        temp_path = "data/ml-latest.zip.part"
+    gscores = pd.read_parquet(
+        "data/parquet/genome-scores.parquet"
+    )
 
-        try:
-            with requests.get(url, stream=True, timeout=(30, 600)) as response:
-                response.raise_for_status()
-
-                with open(temp_path, "wb") as file:
-                    for chunk in response.iter_content(chunk_size=8 * 1024 * 1024):
-                        if chunk:
-                            file.write(chunk)
-
-            os.replace(temp_path, zip_path)
-
-            with zipfile.ZipFile(zip_path, "r") as zip_file:
-                for filename in filenames:
-                    with zip_file.open(f"ml-latest/{filename}") as source:
-                        with open(f"data/{filename}", "wb") as destination:
-                            shutil.copyfileobj(source, destination)
-
-        finally:
-            for path in [temp_path, zip_path]:
-                if os.path.exists(path):
-                    os.remove(path)
-
-    ratings = pd.read_csv("data/ratings.csv",usecols=["movieId", "rating"],dtype={"movieId": "int32", "rating": "float32"})
-    movies = pd.read_csv("data/movies.csv")
-    gscores = pd.read_csv("data/genome-scores.csv",dtype={"movieId": "int32", "tagId": "int16", "relevance": "float32"})
-    links = pd.read_csv("data/links.csv")
+    links = pd.read_parquet(
+        "data/parquet/links.parquet"
+    )
 
     return ratings, movies, gscores, links
+
 
 ratings, movies, gscores, links = load_data()
 
